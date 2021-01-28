@@ -38,6 +38,7 @@ type searchEngineAttributes struct {
 	regex   string
 }
 
+
 var (
 	// logger variables
 	Trace   *log.Logger
@@ -76,8 +77,6 @@ type subdomain struct {
 	source []string // can be reported by multiple sources (Eg. Virus Total, bing)
 }
 
-var Subdomains map[string]subdomain
-
 func main() {
 	domain := initFlags()
 
@@ -90,26 +89,26 @@ func main() {
 
 	logIt("Searching subdomains for domain: "+domain+" ... ", 1, true)
 
-	Subdomains = make(map[string]subdomain) // init global map
+	Subdomains := make(map[string]subdomain) // init global map
 
 	logIt("Subdomains discovered via: ", 1, true)
 	// Method 1: Fetch from virustotal
-	subDomainsFromVirusTotal(domain)
+	subDomainsFromVirusTotal(domain, Subdomains)
 
 	// Method 2: Fetch from search engine (google, yahoo, bing) results
-	subDomainsFromSearchEngines(domain)
+	subDomainsFromSearchEngines(domain, Subdomains)
 
 	// Populate IP addresses
-	populateIpAddresses()
+	populateIpAddresses(Subdomains)
 
-	writeTxtFile("") // "" indicates to just display the sub-domains on console
+	writeTxtFile("", Subdomains) // "" indicates to just display the sub-domains on console
 
-	writeFile(domain)
+	writeFile(domain, Subdomains)
 }
 
 // Iterates through all subdomains and fills in their IP address
-func populateIpAddresses() {
-	for sd, attributes := range Subdomains {
+func populateIpAddresses(subdomains map[string]subdomain ) {
+	for sd, attributes := range subdomains {
 		ip, _ := net.LookupHost(sd)
 
 		var ipv4Arr []string
@@ -121,11 +120,11 @@ func populateIpAddresses() {
 		}
 
 		attributes.ip = ipv4Arr
-		Subdomains[sd] = attributes
+		subdomains[sd] = attributes
 	}
 }
 
-func writeFile(domain string) {
+func writeFile(domain string, subdomains map[string]subdomain) {
 	count := 0
 
 	// Extract requested output format(s)
@@ -134,7 +133,7 @@ func writeFile(domain string) {
 	for _, format := range formats {
 		switch format {
 		case "txt":
-			writeTxtFile(domain)
+			writeTxtFile(domain, subdomains)
 			count += 1
 		case "json":
 			writeJsonFile(domain)
@@ -150,17 +149,17 @@ func writeFile(domain string) {
 
 	if count == 0 {
 		fmt.Println("No known format (-f) specified, saving in txt format...")
-		writeTxtFile(domain)
+		writeTxtFile(domain, subdomains)
 	}
 }
 
-func writeTxtFile(domain string) {
+func writeTxtFile(domain string, subdomains map[string]subdomain) {
 	sno := 0
 	str := ""
 
 	str += fmt.Sprintf("\n%-6s%-35s%-30s%-20s\n", "S.No.", "Subdomain", "Source", "IP")
 	str += fmt.Sprintln("=================================================================================")
-	for sd, attributes := range Subdomains {
+	for sd, attributes := range subdomains {
 		sno += 1
 		numIpAddrs := len(attributes.ip)
 		ipAddrs := ""
@@ -174,7 +173,7 @@ func writeTxtFile(domain string) {
 
 	// null string indicates display the text on screen
 	if domain == "" {
-		logIt(Subdomains, 1)
+		logIt(subdomains, 1)
 		fmt.Println(str)
 	} else { // write to file <domain>.txt
 		err := ioutil.WriteFile(domain+"-subdomains.txt", []byte(str), 0644)
@@ -185,26 +184,26 @@ func writeTxtFile(domain string) {
 }
 
 func writeJsonFile(domain string) {
-
+	fmt.Println("To be implemented")
 }
 
 func writeHtmlFile(domain string) {
-
+	fmt.Println("To be implemented")
 }
 
 func writeCsvFile(domain string) {
-
+	fmt.Println("To be implemented")
 }
 
-func subDomainsFromVirusTotal(domain string) {
+func subDomainsFromVirusTotal(domain string, subdomains map[string]subdomain) {
 	url := "https://virustotal.com/en/domain/" + domain + "/information/"
 
 	xpath := "//*[@id='observed-subdomains']/div"
 	regex := ""
-	subdomains := extractSubDomainsFromUrl(url, xpath, regex)
+	subdURL:= extractSubDomainsFromUrl(url, xpath, regex)
 
-	logIt(subdomains, 1)
-	merge(subdomains, "Virus Total")
+	logIt(subdURL, 1)
+	merge(subdURL, "Virus Total", subdomains)
 
 	// // If virusTotal brings up a captcha, it is in the following xpath
 	// xpath := "/html/body/p"
@@ -217,22 +216,22 @@ func subDomainsFromVirusTotal(domain string) {
 	// }
 }
 
-func subDomainsFromSearchEngines(domain string) {
+func subDomainsFromSearchEngines(domain string, subdomains map[string]subdomain) {
 	// run the scraping algorithm for each searchengine
 	for searchEngineName, attributes := range searchEngines {
 		url := attributes.baseUrl + "&q=site:" + domain + "+-site:www." + domain
 
 		logIt("Fetching from "+searchEngineName+": ROUND I", 1)
-		subdomains := extractSubDomainsFromUrl(url, attributes.xpath, attributes.regex)
+		subds := extractSubDomainsFromUrl(url, attributes.xpath, attributes.regex)
 
 		logIt("First round of "+searchEngineName+" search returned "+
-			strconv.Itoa(len(subdomains))+" subdomains", 1)
+			strconv.Itoa(len(subds))+" subdomains", 1)
 		/* Trial 2:
 		   After a first run, second run is done with a bunch of common subdomains negated
 		   in the query so that we can get more uncommon ones as well
 		*/
-		if len(subdomains) != 0 {
-			mostCommon := getMostCommon(subdomains)
+		if len(subds) != 0 {
+			mostCommon := getMostCommon(subds)
 			count := 0
 			exclusion := ""
 			for _, sd := range mostCommon {
@@ -254,10 +253,10 @@ func subDomainsFromSearchEngines(domain string) {
 				strconv.Itoa(len(newsubdomains))+" subdomains", 1)
 
 			for sd, num := range newsubdomains {
-				subdomains[sd] = num // add new subdomains found to the first map
+				subds[sd] = num // add new subdomains found to the first map
 			}
 		}
-		merge(subdomains, searchEngineName)
+		merge(subds, searchEngineName, subdomains)
 	} // end for range searchengines
 } // end func subDomainsFromSearchEngines
 
@@ -355,15 +354,15 @@ func getMostCommon(subdomains map[string]int) []string {
    return:
     none. Global subdomain map is modified
 */
-func merge(newSubdomains map[string]int, source string) {
+func merge(newSubdomains map[string]int, source string, subdomains map[string]subdomain) {
 	newCount := 0
 	for sd, _ := range newSubdomains {
-		if sdProperties, ok := Subdomains[sd]; ok { // if this sd exists in the global map
+		if sdProperties, ok := subdomains[sd]; ok { // if this sd exists in the global map
 			sdProperties.source = append(sdProperties.source, source)
-			Subdomains[sd] = sdProperties
+			subdomains[sd] = sdProperties
 		} else {
 			newCount += 1
-			Subdomains[sd] = subdomain{source: []string{source}}
+			subdomains[sd] = subdomain{source: []string{source}}
 		}
 	}
 
@@ -371,7 +370,7 @@ func merge(newSubdomains map[string]int, source string) {
 	logIt(str, 1, true)
 }
 
-/* Parse command line flage and initiaize the global flag variables */
+/* Parse command line flag and initiaize the global flag variables */
 func initFlags() string {
 
 	flag.Usage = func() {
